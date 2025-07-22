@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: petcatalog-postgres
+    environment:
+      POSTGRES_DB: petcatalog
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d petcatalog"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - petcatalog-network
+
+  # Opzionale: per visualizzare il database
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: petcatalog-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@petcatalog.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - petcatalog-network
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  petcatalog-network:
+    driver: bridge

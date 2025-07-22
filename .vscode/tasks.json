@@ -121,6 +121,52 @@
       "options": {
         "cwd": "${workspaceFolder}/src/PetCatalog.Functions"
       }
+    },
+    {
+      "label": "docker: start database",
+      "type": "shell",
+      "command": "docker-compose",
+      "args": ["up", "-d", "postgres"],
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "docker: stop database",
+      "type": "shell",
+      "command": "docker-compose",
+      "args": ["down"],
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "docker: start all services",
+      "type": "shell",
+      "command": "docker-compose",
+      "args": ["up", "-d"],
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "start local environment",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "docker: start database",
+        "func: host start"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": []
     }
   ]
 }
