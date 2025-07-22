@@ -5,6 +5,7 @@ using PetCatalog.Application.DTOs;
 using PetCatalog.Application.Services;
 using PetCatalog.Domain.Entities;
 using PetCatalog.Domain.Interfaces;
+using Xunit;
 
 namespace PetCatalog.UnitTests.Application.Services;
 

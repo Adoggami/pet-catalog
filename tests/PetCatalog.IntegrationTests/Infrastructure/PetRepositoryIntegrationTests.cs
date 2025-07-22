@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using PetCatalog.Domain.Entities;
 using PetCatalog.Infrastructure.Data;
 using Testcontainers.PostgreSql;
+using Xunit;
 
 namespace PetCatalog.IntegrationTests.Infrastructure;
 
@@ -43,7 +44,10 @@ public class PetRepositoryIntegrationTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _context.DisposeAsync();
-        await _serviceProvider.GetRequiredService<IServiceScope>().DisposeAsync();
+        if (_serviceProvider is IDisposable disposableServiceProvider)
+        {
+            disposableServiceProvider.Dispose();
+        }
         await _postgres.DisposeAsync();
     }
 
