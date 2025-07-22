@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to .NET Functions",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:azureFunctions.pickProcess}"
+    },
+    {
+      "name": ".NET Core Launch (console)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build (functions)",
+      "program": "${workspaceFolder}/src/PetCatalog.Functions/bin/Debug/net8.0/PetCatalog.Functions.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/PetCatalog.Functions",
+      "console": "internalConsole",
+      "stopAtEntry": false
+    }
+  ]
+}
