@@ -8,7 +8,7 @@ on:
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'src/PetCatalog.Functions'  # Path al progetto Functions
-  DOTNET_VERSION: '9.0.x'  # Versione .NET usata dal progetto
+  DOTNET_VERSION: '9.0.303'  # Versione .NET usata dal progetto
   AZURE_FUNCTIONAPP_NAME: 'func-petcatalog-prod'  # Nome della Function App
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
