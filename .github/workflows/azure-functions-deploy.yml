@@ -18,6 +18,22 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: petcatalog
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -29,16 +45,30 @@ jobs:
 
     - name: Restore NuGet packages
       run: dotnet restore
-      working-directory: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
 
-    - name: Build project
+    - name: Build solution
       run: dotnet build --configuration Release --no-restore
-      working-directory: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+
+    - name: Initialize database
+      run: |
+        # Wait for PostgreSQL to be ready
+        while ! pg_isready -h localhost -p 5432 -U postgres; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+        # Run initialization script if exists
+        if [ -f "init-db/01-init.sql" ]; then
+          PGPASSWORD=postgres psql -h localhost -U postgres -d petcatalog -f init-db/01-init.sql
+        fi
+      env:
+        PGPASSWORD: postgres
 
     - name: Run tests
       run: |
         dotnet test tests/PetCatalog.UnitTests --configuration Release --no-build --logger trx --results-directory TestResults
         dotnet test tests/PetCatalog.IntegrationTests --configuration Release --no-build --logger trx --results-directory TestResults
+      env:
+        ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=petcatalog;Username=postgres;Password=postgres"
 
     - name: Publish application
       run: dotnet publish --configuration Release --output ./output --no-build
