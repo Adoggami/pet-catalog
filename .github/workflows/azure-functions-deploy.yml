@@ -12,9 +12,10 @@ concurrency:
 env:
   # Project & runtime
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'src/PetCatalog.Functions'
-  DOTNET_VERSION: '9.0.x'                 # usa 9.0.x se isolated; altrimenti 8.0.x
+  DOTNET_VERSION: '9.0.x'                     # 9.0.x ok con model isolated
   # Azure
   AZURE_FUNCTIONAPP_NAME: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+  AZURE_RESOURCE_GROUP: rg-adoggami-prod       # mettilo nei secrets se preferisci
   ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
   ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -50,7 +51,7 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
-        cache: false
+        cache: false     # niente lock file → disattivo cache
 
     - name: Restore
       run: dotnet restore
@@ -90,6 +91,10 @@ jobs:
         zip -r ../package.zip .
         cd ..
 
+    - name: Validate package (must contain functions.metadata & host.json)
+      run: |
+        unzip -l package.zip | grep -E 'functions.metadata|host.json' || (echo "NO FUNCTION METADATA FOUND" && exit 1)
+
     - name: Upload artifacts (tests & package)
       uses: actions/upload-artifact@v4
       with:
@@ -119,26 +124,34 @@ jobs:
             "tenantId": "${{ env.ARM_TENANT_ID }}"
           }
 
-    # (Facoltativo) Imposta/aggiorna App Settings prima del deploy
-    - name: Ensure required app settings
+    - name: Ensure required app settings (Flex: no WEBSITE_RUN_FROM_PACKAGE)
       run: |
         az functionapp config appsettings set \
-          --name  "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-          --resource-group "rg-adoggami-prod" \
+          -g "${{ env.AZURE_RESOURCE_GROUP }}" \
+          -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
           --settings FUNCTIONS_WORKER_RUNTIME=dotnet-isolated FUNCTIONS_EXTENSION_VERSION=~4
 
-    - name: Deploy to Azure Functions (zip deploy)
-      uses: Azure/functions-action@v1
-      with:
-        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-        package: package.zip
-        scm-do-build-during-deployment: false
-        enable-oryx-build: false
+        # rimuovi se presente
+        az functionapp config appsettings delete \
+          -g "${{ env.AZURE_RESOURCE_GROUP }}" \
+          -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+          --setting-names WEBSITE_RUN_FROM_PACKAGE || true
 
-    # (Facoltativo) Sync triggers, utile dopo zip deploy
-    - name: Sync triggers
+    - name: Deploy zip to Flex Consumption
       run: |
-        az functionapp sync-function-triggers -g rg-adoggami-prod -n ${{ env.AZURE_FUNCTIONAPP_NAME }}
+        az functionapp deploy \
+          -g "${{ env.AZURE_RESOURCE_GROUP }}" \
+          -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+          --src-path package.zip \
+          --type zip
+
+    - name: Restart app (workaround per sync triggers non necessario su Flex, ma utile se metadata cambia)
+      run: |
+        az functionapp restart -g "${{ env.AZURE_RESOURCE_GROUP }}" -n "${{ env.AZURE_FUNCTIONAPP_NAME }}"
+
+    - name: Check functions list
+      run: |
+        az functionapp function list -g "${{ env.AZURE_RESOURCE_GROUP }}" -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" -o table || true
 
     - name: Azure logout
       run: az logout
