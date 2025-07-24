@@ -10,17 +10,14 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Project & runtime
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'src/PetCatalog.Functions'
-  DOTNET_VERSION: '9.0.x'                     # 9.0.x ok con model isolated
-  # Azure
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: src/PetCatalog.Functions
+  DOTNET_VERSION: 9.0.x
   AZURE_FUNCTIONAPP_NAME: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
-  AZURE_RESOURCE_GROUP: rg-adoggami-prod       # mettilo nei secrets se preferisci
-  ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
-  ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+  AZURE_RESOURCE_GROUP: rg-adoggami-prod
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-  # Test DB
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   POSTGRES_USER: postgres
   POSTGRES_PASSWORD: postgres
   POSTGRES_DB: petcatalog
@@ -28,13 +25,14 @@ env:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
-          POSTGRES_USER:     ${{ env.POSTGRES_USER }}
-          POSTGRES_DB:       ${{ env.POSTGRES_DB }}
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_DB: ${{ env.POSTGRES_DB }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -44,113 +42,108 @@ jobs:
           - 5432:5432
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup .NET ${{ env.DOTNET_VERSION }}
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_VERSION }}
-        cache: false     # niente lock file → disattivo cache
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: false
 
-    - name: Restore
-      run: dotnet restore
+      - name: Restore
+        run: dotnet restore
 
-    - name: Build
-      run: dotnet build --configuration Release --no-restore
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
 
-    - name: Wait for PostgreSQL & init DB
-      env:
-        PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
-      run: |
-        until pg_isready -h localhost -p 5432 -U $POSTGRES_USER; do
-          echo "Waiting for PostgreSQL..."
-          sleep 2
-        done
-        if [ -f "init-db/01-init.sql" ]; then
-          psql -h localhost -U $POSTGRES_USER -d $POSTGRES_DB -f init-db/01-init.sql
-        fi
+      - name: Wait for PostgreSQL & init DB
+        env:
+          PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        run: |
+          until pg_isready -h localhost -p 5432 -U $POSTGRES_USER; do
+            echo "Waiting for PostgreSQL...";
+            sleep 2;
+          done
+          if [ -f "init-db/01-init.sql" ]; then
+            psql -h localhost -U $POSTGRES_USER -d $POSTGRES_DB -f init-db/01-init.sql
+          fi
 
-    - name: Run unit tests
-      run: dotnet test tests/PetCatalog.UnitTests --configuration Release --no-build --logger trx --results-directory TestResults
+      - name: Run unit tests
+        run: dotnet test tests/PetCatalog.UnitTests --configuration Release --no-build --logger trx --results-directory TestResults
 
-    - name: Run integration tests
-      env:
-        ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=${{ env.POSTGRES_DB }};Username=${{ env.POSTGRES_USER }};Password=${{ env.POSTGRES_PASSWORD }}"
-      run: dotnet test tests/PetCatalog.IntegrationTests --configuration Release --no-build --logger trx --results-directory TestResults
+      - name: Run integration tests
+        env:
+          ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=${{ env.POSTGRES_DB }};Username=${{ env.POSTGRES_USER }};Password=${{ env.POSTGRES_PASSWORD }}"
+        run: dotnet test tests/PetCatalog.IntegrationTests --configuration Release --no-build --logger trx --results-directory TestResults
 
-    - name: Publish Azure Functions
-      run: >
-        dotnet publish
-        ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/PetCatalog.Functions.csproj
-        -c Release -o ./publish
+      - name: Publish Azure Functions
+        run: dotnet publish ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/PetCatalog.Functions.csproj -c Release -o ./publish
 
-    - name: Zip package
-      run: |
-        cd publish
-        zip -r ../package.zip .
-        cd ..
+      - name: Zip package
+        run: |
+          cd publish
+          zip -r ../package.zip .
+          cd ..
 
-    - name: Validate package (must contain functions.metadata & host.json)
-      run: |
-        unzip -l package.zip | grep -E 'functions.metadata|host.json' || (echo "NO FUNCTION METADATA FOUND" && exit 1)
+      - name: Validate package (must contain functions.metadata & host.json)
+        run: |
+          unzip -l package.zip | grep -E 'functions.metadata|host.json' || (echo "NO FUNCTION METADATA FOUND" && exit 1)
 
-    - name: Upload artifacts (tests & package)
-      uses: actions/upload-artifact@v4
-      with:
-        name: functionapp-package
-        path: |
-          package.zip
-          TestResults/**/*.trx
+      - name: Upload artifacts (tests & package)
+        uses: actions/upload-artifact@v4
+        with:
+          name: functionapp-package
+          path: |
+            package.zip
+            TestResults/**/*.trx
 
   deploy:
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
-    - name: Download package
-      uses: actions/download-artifact@v4
-      with:
-        name: functionapp-package
-        path: .
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: functionapp-package
+          path: .
 
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: |
-          {
-            "clientId": "${{ env.ARM_CLIENT_ID }}",
-            "clientSecret": "${{ env.ARM_CLIENT_SECRET }}",
-            "subscriptionId": "${{ env.ARM_SUBSCRIPTION_ID }}",
-            "tenantId": "${{ env.ARM_TENANT_ID }}"
-          }
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ env.ARM_CLIENT_ID }}",
+              "clientSecret": "${{ env.ARM_CLIENT_SECRET }}",
+              "subscriptionId": "${{ env.ARM_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ env.ARM_TENANT_ID }}"
+            }
 
-    - name: Ensure required app settings (Flex: no WEBSITE_RUN_FROM_PACKAGE)
-      run: |
-        az functionapp config appsettings set \
-          --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-          --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-          --settings FUNCTIONS_WORKER_RUNTIME=dotnet-isolated FUNCTIONS_EXTENSION_VERSION=~4
-        
-        az functionapp config appsettings delete \
-          --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-          --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-          --setting-names WEBSITE_RUN_FROM_PACKAGE || true
+      - name: Ensure required app settings (Flex: no WEBSITE_RUN_FROM_PACKAGE)
+        run: |
+          az functionapp config appsettings set \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+            --settings FUNCTIONS_WORKER_RUNTIME=dotnet-isolated FUNCTIONS_EXTENSION_VERSION=~4
 
-    - name: Deploy zip to Flex Consumption
-      run: |
-        az functionapp deploy \
-          --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-          --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-          --src-path package.zip \
-          --type zip
+          az functionapp config appsettings delete \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+            --setting-names WEBSITE_RUN_FROM_PACKAGE || true
 
-    - name: Restart app (workaround per sync triggers non necessario su Flex, ma utile se metadata cambia)
-      run: |
-        az functionapp restart --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --name "${{ env.AZURE_FUNCTIONAPP_NAME }}"
+      - name: Deploy zip to Flex Consumption
+        run: |
+          az functionapp deploy \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+            --src-path package.zip \
+            --type zip
 
-    - name: Check functions list
-      run: |
-        az functionapp function list --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" --output table || true
+      - name: Restart app
+        run: az functionapp restart --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --name "${{ env.AZURE_FUNCTIONAPP_NAME }}"
 
-    - name: Azure logout
-      run: az logout
+      - name: Check functions list
+        run: az functionapp function list --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" -o table || true
+
+      - name: Azure logout
+        run: az logout
