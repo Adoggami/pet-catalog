@@ -127,31 +127,31 @@ jobs:
     - name: Ensure required app settings (Flex: no WEBSITE_RUN_FROM_PACKAGE)
       run: |
         az functionapp config appsettings set \
-          -g "${{ env.AZURE_RESOURCE_GROUP }}" \
-          -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+          --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+          --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
           --settings FUNCTIONS_WORKER_RUNTIME=dotnet-isolated FUNCTIONS_EXTENSION_VERSION=~4
 
         # rimuovi se presente
         az functionapp config appsettings delete \
-          -g "${{ env.AZURE_RESOURCE_GROUP }}" \
-          -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+          --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+          --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
           --setting-names WEBSITE_RUN_FROM_PACKAGE || true
 
     - name: Deploy zip to Flex Consumption
       run: |
         az functionapp deploy \
-          -g "${{ env.AZURE_RESOURCE_GROUP }}" \
-          -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+          --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+          --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
           --src-path package.zip \
           --type zip
 
     - name: Restart app (workaround per sync triggers non necessario su Flex, ma utile se metadata cambia)
       run: |
-        az functionapp restart -g "${{ env.AZURE_RESOURCE_GROUP }}" -n "${{ env.AZURE_FUNCTIONAPP_NAME }}"
+        az functionapp restart --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --name "${{ env.AZURE_FUNCTIONAPP_NAME }}"
 
     - name: Check functions list
       run: |
-        az functionapp function list -g "${{ env.AZURE_RESOURCE_GROUP }}" -n "${{ env.AZURE_FUNCTIONAPP_NAME }}" -o table || true
+        az functionapp function list --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" --output table || true
 
     - name: Azure logout
       run: az logout
