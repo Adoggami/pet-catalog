@@ -120,7 +120,7 @@ jobs:
               "tenantId": "${{ env.ARM_TENANT_ID }}"
             }
 
-      - name: Ensure required app settings (Flex: no WEBSITE_RUN_FROM_PACKAGE)
+      - name: Ensure required app settings (Flex - no WEBSITE_RUN_FROM_PACKAGE)
         run: |
           az functionapp config appsettings set \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
