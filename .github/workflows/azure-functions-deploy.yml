@@ -52,12 +52,12 @@ jobs:
           popd
       
       - name: 'Run Unit Tests'
-        run: dotnet test tests/PetCatalog.UnitTests --configuration Release --no-build
+        run: dotnet test tests/PetCatalog.UnitTests --configuration Release
       
       - name: 'Run Integration Tests'
         env:
           ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=${{ env.POSTGRES_DB }};Username=${{ env.POSTGRES_USER }};Password=${{ env.POSTGRES_PASSWORD }}"
-        run: dotnet test tests/PetCatalog.IntegrationTests --configuration Release --no-build
+        run: dotnet test tests/PetCatalog.IntegrationTests --configuration Release
       
       - name: 'Azure Login'
         uses: azure/login@v1
