@@ -137,14 +137,22 @@ jobs:
             --settings \
               FUNCTIONS_WORKER_RUNTIME=dotnet-isolated \
               FUNCTIONS_EXTENSION_VERSION=~4
+          
+          echo "Removing WEBSITE_RUN_FROM_PACKAGE if exists..."
+          az functionapp config appsettings delete \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+            --setting-names WEBSITE_RUN_FROM_PACKAGE || true
 
       - name: Deploy using Azure CLI
         run: |
           echo "Deploying to Function App..."
-          az webapp deployment source config-zip \
+          az webapp deploy \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-            --src functionapp.zip
+            --src-path functionapp.zip \
+            --type zip \
+            --async false
 
       - name: Restart Function App
         run: |
