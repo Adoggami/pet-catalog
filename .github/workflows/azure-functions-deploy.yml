@@ -128,7 +128,7 @@ jobs:
               "tenantId": "${{ env.ARM_TENANT_ID }}"
             }
 
-      - name: Configure app settings
+      - name: Configure app settings and clean deployment
         run: |
           echo "Configuring Function App settings..."
           az functionapp config appsettings set \
@@ -138,21 +138,33 @@ jobs:
               FUNCTIONS_WORKER_RUNTIME=dotnet-isolated \
               FUNCTIONS_EXTENSION_VERSION=~4
           
-          echo "Removing WEBSITE_RUN_FROM_PACKAGE if exists..."
+          echo "Removing WEBSITE_RUN_FROM_PACKAGE..."
           az functionapp config appsettings delete \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
             --setting-names WEBSITE_RUN_FROM_PACKAGE || true
+          
+          echo "Waiting for settings to propagate..."
+          sleep 10
 
-      - name: Deploy using Azure CLI
+      - name: Deploy using kudu zip push
         run: |
-          echo "Deploying to Function App..."
-          az webapp deploy \
+          echo "Getting publishing credentials..."
+          CREDS=$(az functionapp deployment list-publishing-credentials \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-            --src-path functionapp.zip \
-            --type zip \
-            --async false
+            --query "{username:publishingUserName, password:publishingPassword}" -o json)
+          
+          USERNAME=$(echo $CREDS | jq -r '.username')
+          PASSWORD=$(echo $CREDS | jq -r '.password')
+          
+          echo "Deploying via Kudu API..."
+          curl -X POST \
+            --data-binary @functionapp.zip \
+            -H "Content-Type: application/zip" \
+            -u "$USERNAME:$PASSWORD" \
+            "https://${{ env.AZURE_FUNCTIONAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy" \
+            --max-time 600
 
       - name: Restart Function App
         run: |
