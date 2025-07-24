@@ -1,6 +1,6 @@
 # Pet Catalog C# Microservice
 
-A serverless microservice for managing a pet catalog using Azure Functions (.NET 8) and PostgreSQL.
+A serverless microservice for managing a pet catalog using Azure Functions (.NET 9) and PostgreSQL.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ pet-service-cs/
 ## Features
 
 - RESTful API for CRUD operations on pets
-- Serverless architecture using Azure Functions (.NET 8 isolated)
+- Serverless architecture using Azure Functions (.NET 9 isolated)
 - PostgreSQL database with Entity Framework Core
 - Clean Architecture with separation of concerns
 - Comprehensive testing (unit + integration)
@@ -69,7 +69,7 @@ pet-service-cs/
 
 ### Prerequisites
 
-- .NET 8 SDK
+- .NET 9 SDK
 - Azure Functions Core Tools v4
 - PostgreSQL (or Docker with provided docker-compose)
 - Visual Studio 2022 or VS Code
@@ -116,6 +116,9 @@ After deployment to Azure, test the live API:
 FUNCTION_URL="https://func-petcatalog-prod.azurewebsites.net"
 FUNCTION_KEY="your-function-key"
 
+# Check if Function App is running
+curl "$FUNCTION_URL/api/health?code=$FUNCTION_KEY"
+
 # Get all pets
 curl "$FUNCTION_URL/api/pets?code=$FUNCTION_KEY"
 
@@ -133,6 +136,20 @@ curl -X POST "$FUNCTION_URL/api/pets?code=$FUNCTION_KEY" \
     "description": "Loyal and intelligent dog"
   }'
 ```
+
+**Troubleshooting 404 errors:**
+
+1. **Check Function App status** in Azure Portal
+2. **Verify deployment** completed successfully:
+   ```bash
+   func azure functionapp list-functions func-petcatalog-prod
+   ```
+3. **Check Function App logs**:
+   ```bash
+   func azure functionapp logstream func-petcatalog-prod
+   ```
+4. **Verify .NET 9 runtime** is properly configured
+5. **Check if all dependencies** are deployed correctly
 
 **Get Function Key** from Azure Portal:
 1. Go to Azure Portal → Function App → Functions → Any function → Function Keys
@@ -219,13 +236,27 @@ dotnet test --collect:"XPlat Code Coverage"
    func azure login
    ```
 
-2. **Deploy to the Function App** (created by Terraform):
+2. **Build the project** for .NET 9:
    ```bash
    cd src/PetCatalog.Functions
-   func azure functionapp publish func-petcatalog-prod
+   dotnet publish --configuration Release --framework net9.0
    ```
 
-3. **Or use VS Code task**:
+3. **Deploy to the Function App** (created by Terraform):
+   ```bash
+   func azure functionapp publish func-petcatalog-prod --force
+   ```
+
+4. **Verify deployment**:
+   ```bash
+   # List deployed functions
+   func azure functionapp list-functions func-petcatalog-prod
+   
+   # Check runtime version
+   az functionapp config show --name func-petcatalog-prod --resource-group rg-adoggami-prod --query "netFrameworkVersion"
+   ```
+
+5. **Or use VS Code task**:
    - Press `Ctrl+Shift+P` → `Tasks: Run Task` → `deploy to azure`
 
 ### Automated Deployment with GitHub Actions

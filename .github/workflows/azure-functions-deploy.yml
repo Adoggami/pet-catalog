@@ -2,30 +2,38 @@ name: Deploy .NET Azure Functions
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:  # Consente di eseguire manualmente il workflow
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-func-petcatalog-prod
+  cancel-in-progress: true
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'src/PetCatalog.Functions'  # Path al progetto Functions
-  DOTNET_VERSION: '9.0.303'  # Versione .NET usata dal progetto
-  AZURE_FUNCTIONAPP_NAME: 'func-petcatalog-prod'  # Nome della Function App
-  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  # Project & runtime
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'src/PetCatalog.Functions'
+  DOTNET_VERSION: '9.0.x'                 # usa 9.0.x se isolated; altrimenti 8.0.x
+  # Azure
+  AZURE_FUNCTIONAPP_NAME: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+  ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+  # Test DB
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_DB: petcatalog
 
 jobs:
-  build-and-deploy:
+  build-and-test:
     runs-on: ubuntu-latest
-    
     services:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: petcatalog
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_USER:     ${{ env.POSTGRES_USER }}
+          POSTGRES_DB:       ${{ env.POSTGRES_DB }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -33,46 +41,72 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    
+
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Setup .NET Core SDK ${{ env.DOTNET_VERSION }}
+    - name: Setup .NET ${{ env.DOTNET_VERSION }}
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
+        cache: true
 
-    - name: Restore NuGet packages
+    - name: Restore
       run: dotnet restore
 
-    - name: Build solution
+    - name: Build
       run: dotnet build --configuration Release --no-restore
 
-    - name: Initialize database
+    - name: Wait for PostgreSQL & init DB
+      env:
+        PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
       run: |
-        # Wait for PostgreSQL to be ready
-        while ! pg_isready -h localhost -p 5432 -U postgres; do
+        until pg_isready -h localhost -p 5432 -U $POSTGRES_USER; do
           echo "Waiting for PostgreSQL..."
           sleep 2
         done
-        # Run initialization script if exists
         if [ -f "init-db/01-init.sql" ]; then
-          PGPASSWORD=postgres psql -h localhost -U postgres -d petcatalog -f init-db/01-init.sql
+          psql -h localhost -U $POSTGRES_USER -d $POSTGRES_DB -f init-db/01-init.sql
         fi
-      env:
-        PGPASSWORD: postgres
 
-    - name: Run tests
+    - name: Run unit tests
+      run: dotnet test tests/PetCatalog.UnitTests --configuration Release --no-build --logger trx --results-directory TestResults
+
+    - name: Run integration tests
+      env:
+        ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=${{ env.POSTGRES_DB }};Username=${{ env.POSTGRES_USER }};Password=${{ env.POSTGRES_PASSWORD }}"
+      run: dotnet test tests/PetCatalog.IntegrationTests --configuration Release --no-build --logger trx --results-directory TestResults
+
+    - name: Publish Azure Functions
+      run: >
+        dotnet publish
+        ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/PetCatalog.Functions.csproj
+        -c Release -o ./publish
+
+    - name: Zip package
       run: |
-        dotnet test tests/PetCatalog.UnitTests --configuration Release --no-build --logger trx --results-directory TestResults
-        dotnet test tests/PetCatalog.IntegrationTests --configuration Release --no-build --logger trx --results-directory TestResults
-      env:
-        ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=petcatalog;Username=postgres;Password=postgres"
+        cd publish
+        zip -r ../package.zip .
+        cd ..
 
-    - name: Publish application
-      run: dotnet publish --configuration Release --output ./output --no-build
-      working-directory: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+    - name: Upload artifacts (tests & package)
+      uses: actions/upload-artifact@v4
+      with:
+        name: functionapp-package
+        path: |
+          package.zip
+          TestResults/**/*.trx
+
+  deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download package
+      uses: actions/download-artifact@v4
+      with:
+        name: functionapp-package
+        path: .
 
     - name: Azure Login
       uses: azure/login@v1
@@ -85,14 +119,26 @@ jobs:
             "tenantId": "${{ env.ARM_TENANT_ID }}"
           }
 
-    - name: Deploy to Azure Functions
+    # (Facoltativo) Imposta/aggiorna App Settings prima del deploy
+    - name: Ensure required app settings
+      run: |
+        az functionapp config appsettings set \
+          --name  "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+          --resource-group "rg-adoggami-prod" \
+          --settings FUNCTIONS_WORKER_RUNTIME=dotnet-isolated FUNCTIONS_EXTENSION_VERSION=~4
+
+    - name: Deploy to Azure Functions (zip deploy)
       uses: Azure/functions-action@v1
       with:
         app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-        package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output
-        scm-do-build-during-deployment: false  # We're building locally
-        enable-oryx-build: false  # We're using pre-built package
+        package: package.zip
+        scm-do-build-during-deployment: false
+        enable-oryx-build: false
+
+    # (Facoltativo) Sync triggers, utile dopo zip deploy
+    - name: Sync triggers
+      run: |
+        az functionapp sync-function-triggers -g rg-adoggami-prod -n ${{ env.AZURE_FUNCTIONAPP_NAME }}
 
     - name: Azure logout
-      run: |
-        az logout
+      run: az logout
