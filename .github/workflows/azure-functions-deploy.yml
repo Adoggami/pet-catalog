@@ -1,4 +1,4 @@
-name: Deploy .NET Azure Functions
+name: Deploy .NET Azure Functions to Linux Consumption
 
 on:
   push:
@@ -14,6 +14,7 @@ env:
   DOTNET_VERSION: 9.0.x
   AZURE_FUNCTIONAPP_NAME: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
   AZURE_RESOURCE_GROUP: rg-adoggami-prod
+  AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -80,36 +81,53 @@ jobs:
       - name: Publish Azure Functions
         run: |
           cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          dotnet publish -c Release -o ./output --no-self-contained --runtime linux-x64
+          dotnet publish -c Release --no-self-contained --runtime linux-x64 -o ./output
+          
+          # Ensure host.json is in the output
+          if [ -f "../host.json" ]; then
+            cp ../host.json ./output/
+          elif [ -f "host.json" ]; then
+            cp host.json ./output/
+          fi
+          
+          # Create deployment package
           cd output
-          zip -r ../../../functionapp.zip .
-          cd ../../..
-
-      - name: List published content
-        run: |
-          echo "Content of the published package:"
-          unzip -l functionapp.zip | head -20
+          zip -r ../../deployment-package.zip .
+          cd ../..
+          
+          echo "Package created: $(pwd)/deployment-package.zip"
+          echo "Package size: $(du -h deployment-package.zip | cut -f1)"
 
       - name: Validate package structure
         run: |
-          echo "Validating package structure..."
-          unzip -l functionapp.zip | grep -E 'host.json|\.dll|\.deps.json|\.runtimeconfig.json' || (echo "Missing required files!" && exit 1)
+          echo "=== Validating deployment package ==="
+          unzip -l deployment-package.zip | head -30
           
-          # Extract and check host.json
-          unzip -p functionapp.zip host.json || echo "Warning: host.json not found at root level"
+          # Check for required files
+          echo "=== Checking for required files ==="
+          unzip -l deployment-package.zip | grep -E "host.json|\.dll|\.deps.json|\.runtimeconfig.json" || {
+            echo "ERROR: Missing required files in package!"
+            exit 1
+          }
+          
+          # Verify host.json exists
+          unzip -p deployment-package.zip host.json || {
+            echo "ERROR: host.json not found in package!"
+            exit 1
+          }
 
-      - name: Upload artifacts
+      - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
           name: functionapp-package
           path: |
-            functionapp.zip
+            deployment-package.zip
             TestResults/**/*.trx
 
   deploy:
     needs: build-and-test
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Download package
         uses: actions/download-artifact@v4
@@ -128,17 +146,28 @@ jobs:
               "tenantId": "${{ env.ARM_TENANT_ID }}"
             }
 
-      - name: Configure app settings and clean deployment
+      - name: Configure Function App for Linux Consumption
         run: |
-          echo "Configuring Function App settings..."
+          echo "=== Configuring Function App settings ==="
+          
+          # Get storage connection string
+          STORAGE_CONNECTION=$(az storage account show-connection-string \
+            --name "${{ env.AZURE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query connectionString -o tsv)
+          
+          # Set required app settings
           az functionapp config appsettings set \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
             --settings \
               FUNCTIONS_WORKER_RUNTIME=dotnet-isolated \
-              FUNCTIONS_EXTENSION_VERSION=~4
+              FUNCTIONS_EXTENSION_VERSION=~4 \
+              AzureWebJobsStorage="$STORAGE_CONNECTION" \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+              ENABLE_ORYX_BUILD=false
           
-          echo "Removing WEBSITE_RUN_FROM_PACKAGE..."
+          # Remove WEBSITE_RUN_FROM_PACKAGE if it exists (will be set to URL later)
           az functionapp config appsettings delete \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
@@ -147,48 +176,102 @@ jobs:
           echo "Waiting for settings to propagate..."
           sleep 10
 
-      - name: Deploy using kudu zip push
+      - name: Upload package to Azure Storage
         run: |
-          echo "Getting publishing credentials..."
-          CREDS=$(az functionapp deployment list-publishing-credentials \
+          echo "=== Uploading package to Azure Storage ==="
+          
+          # Create container if it doesn't exist
+          az storage container create \
+            --name "function-releases" \
+            --account-name "${{ env.AZURE_STORAGE_ACCOUNT }}" \
+            --auth-mode login || true
+          
+          # Generate unique blob name with timestamp
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BLOB_NAME="${{ env.AZURE_FUNCTIONAPP_NAME }}/$TIMESTAMP/deployment-package.zip"
+          
+          # Upload package
+          az storage blob upload \
+            --account-name "${{ env.AZURE_STORAGE_ACCOUNT }}" \
+            --container-name "function-releases" \
+            --name "$BLOB_NAME" \
+            --file deployment-package.zip \
+            --auth-mode login \
+            --overwrite
+          
+          # Generate SAS URL (valid for 5 years)
+          END_DATE=$(date -u -d "5 years" '+%Y-%m-%dT%H:%MZ')
+          
+          PACKAGE_URL=$(az storage blob generate-sas \
+            --account-name "${{ env.AZURE_STORAGE_ACCOUNT }}" \
+            --container-name "function-releases" \
+            --name "$BLOB_NAME" \
+            --permissions r \
+            --expiry "$END_DATE" \
+            --auth-mode login \
+            --full-uri -o tsv)
+          
+          echo "Package uploaded successfully"
+          echo "PACKAGE_URL=$PACKAGE_URL" >> $GITHUB_ENV
+
+      - name: Deploy to Linux Consumption Function App
+        run: |
+          echo "=== Deploying to Function App ==="
+          
+          # Update WEBSITE_RUN_FROM_PACKAGE with the blob URL
+          az functionapp config appsettings set \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-            --query "{username:publishingUserName, password:publishingPassword}" -o json)
+            --settings WEBSITE_RUN_FROM_PACKAGE="$PACKAGE_URL"
           
-          USERNAME=$(echo $CREDS | jq -r '.username')
-          PASSWORD=$(echo $CREDS | jq -r '.password')
+          echo "Deployment initiated. Waiting for app to sync..."
+          sleep 20
           
-          echo "Deploying via Kudu API..."
-          curl -X POST \
-            --data-binary @functionapp.zip \
-            -H "Content-Type: application/zip" \
-            -u "$USERNAME:$PASSWORD" \
-            "https://${{ env.AZURE_FUNCTIONAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy" \
-            --max-time 600
-
-      - name: Restart Function App
-        run: |
-          echo "Restarting Function App..."
+          # Sync triggers
+          echo "=== Syncing triggers ==="
+          az functionapp function sync-triggers \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" || {
+              echo "Warning: Sync triggers failed, but deployment may still succeed"
+            }
+          
+          # Restart the function app
+          echo "=== Restarting Function App ==="
           az functionapp restart \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}"
+          
+          echo "Waiting for restart to complete..."
+          sleep 30
 
-      - name: Wait for deployment to settle
-        run: sleep 30
-
-      - name: Check deployment status
+      - name: Verify deployment
         run: |
-          echo "Checking function app status..."
-          az functionapp show \
+          echo "=== Verifying deployment ==="
+          
+          # Check app status
+          STATUS=$(az functionapp show \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-            --query "state" -o tsv
+            --query "state" -o tsv)
           
-          echo "Listing deployed functions..."
+          echo "Function App Status: $STATUS"
+          
+          # List functions (this might fail initially, but that's ok)
+          echo "=== Attempting to list deployed functions ==="
           az functionapp function list \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
-            -o table || echo "No functions found or error listing functions"
+            -o table || echo "Function list not available yet"
+          
+          # Get app URL
+          APP_URL=$(az functionapp show \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+            --query "defaultHostName" -o tsv)
+          
+          echo "Function App URL: https://$APP_URL"
+          echo "Deployment completed successfully!"
 
       - name: Azure logout
+        if: always()
         run: az logout
