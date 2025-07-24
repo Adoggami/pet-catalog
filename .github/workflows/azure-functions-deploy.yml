@@ -45,7 +45,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -62,8 +62,8 @@ jobs:
           PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
         run: |
           until pg_isready -h localhost -p 5432 -U $POSTGRES_USER; do
-            echo "Waiting for PostgreSQL...";
-            sleep 2;
+            echo "Waiting for PostgreSQL..."
+            sleep 2
           done
           if [ -f "init-db/01-init.sql" ]; then
             psql -h localhost -U $POSTGRES_USER -d $POSTGRES_DB -f init-db/01-init.sql
@@ -101,6 +101,7 @@ jobs:
   deploy:
     needs: build-and-test
     runs-on: ubuntu-latest
+
     steps:
       - name: Download package
         uses: actions/download-artifact@v4
