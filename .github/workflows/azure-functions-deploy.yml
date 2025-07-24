@@ -136,28 +136,20 @@ jobs:
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
             --settings \
               FUNCTIONS_WORKER_RUNTIME=dotnet-isolated \
-              FUNCTIONS_EXTENSION_VERSION=~4 \
-              WEBSITE_RUN_FROM_PACKAGE=0
+              FUNCTIONS_EXTENSION_VERSION=~4
 
-      - name: Stop Function App
+      - name: Deploy using Azure CLI
         run: |
-          echo "Stopping Function App..."
-          az functionapp stop \
+          echo "Deploying to Function App..."
+          az webapp deployment source config-zip \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}"
+            --name "${{ env.AZURE_FUNCTIONAPP_NAME }}" \
+            --src functionapp.zip
 
-      - name: Deploy to Azure Functions
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-          package: functionapp.zip
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
-          respect-funcignore: true
-
-      - name: Start Function App
+      - name: Restart Function App
         run: |
-          echo "Starting Function App..."
-          az functionapp start \
+          echo "Restarting Function App..."
+          az functionapp restart \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --name "${{ env.AZURE_FUNCTIONAPP_NAME }}"
 
