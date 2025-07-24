@@ -11,5 +11,20 @@
   "extensionBundle": {
     "id": "Microsoft.Azure.Functions.ExtensionBundle",
     "version": "[4.*, 5.0.0)"
+  },
+  "extensions": {
+    "http": {
+      "customHeaders": {
+        "X-Content-Type-Options": "nosniff"
+      }
+    }
+  },
+  "host": {
+    "cors": {
+      "allowedOrigins": ["*"],
+      "allowedMethods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      "allowedHeaders": ["*"],
+      "allowCredentials": false
+    }
   }
 }

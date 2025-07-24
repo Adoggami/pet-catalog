@@ -1,8 +1,9 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using PetCatalog.Functions.Extensions;
 using PetCatalog.Functions.Services.Interfaces;
+using System.Net;
+using System.Text.Json;
 
 namespace PetCatalog.Functions.Functions;
 
@@ -23,23 +24,38 @@ public class DeletePet
         int id,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("DeletePet function processed a request for pet ID: {PetId}", id);
-
         try
         {
+            _logger.LogInformation("DeletePet function processed a request for pet ID: {PetId}", id);
+
             var result = await _petService.DeletePetAsync(id, cancellationToken);
-    
-            return result switch
+
+            if (!result.Success || !result.Data)
             {
-                { Success: true, Data: true } => await req.CreateJsonResponseAsync(new { message = $"Pet with ID {id} deleted successfully" }, System.Net.HttpStatusCode.NoContent),
-                { Success: true, Data: false } => await req.CreateNotFoundResponseAsync($"Pet with ID {id} not found"),
-                _ => await req.CreateErrorResponseAsync(result.Error ?? "Unknown error", System.Net.HttpStatusCode.InternalServerError)
-            };
+                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
+                notFoundResponse.Headers.Add("Content-Type", "application/json");
+                
+                var errorMessage = JsonSerializer.Serialize(new { error = $"Pet with ID {id} not found" });
+                await notFoundResponse.WriteStringAsync(errorMessage);
+                
+                return notFoundResponse;
+            }
+
+            // Successo - ritorna 204 No Content
+            var response = req.CreateResponse(HttpStatusCode.NoContent);
+            return response;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in DeletePet function for pet ID: {PetId}", id);
-            return await req.CreateErrorResponseAsync("An error occurred while processing the request", System.Net.HttpStatusCode.InternalServerError);
+            
+            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            errorResponse.Headers.Add("Content-Type", "application/json");
+            
+            var errorMessage = JsonSerializer.Serialize(new { error = "An error occurred while processing the request" });
+            await errorResponse.WriteStringAsync(errorMessage);
+            
+            return errorResponse;
         }
     }
 }
