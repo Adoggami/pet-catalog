@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using PetCatalog.Functions.Extensions;
 
 var host = new HostBuilder()
-    .ConfigureFunctionsWebApplication()
+    .ConfigureFunctionsWorkerDefaults() // registra trigger/binding default
     .ConfigureServices(services =>
     {
         services.AddApplicationInsightsTelemetryWorkerService();
